@@ -17,12 +17,13 @@
 #include <chrono>
 #include <sstream>
 
-#include <support/colors.h>
-#include <passes/passes.h>
-#include <pass.h>
-#include <wasm-validator.h>
-#include <wasm-io.h>
+#include "support/colors.h"
+#include "passes/passes.h"
+#include "pass.h"
+#include "wasm-validator.h"
+#include "wasm-io.h"
 #include "ir/hashed.h"
+#include "ir/module-utils.h"
 
 namespace wasm {
 
@@ -66,12 +67,15 @@ std::string PassRegistry::getPassDescription(std::string name) {
 // PassRunner
 
 void PassRegistry::registerPasses() {
+  registerPass("dae", "removes arguments to calls in an lto-like manner", createDAEPass);
+  registerPass("dae-optimizing", "removes arguments to calls in an lto-like manner, and optimizes where we removed", createDAEOptimizingPass);
   registerPass("coalesce-locals", "reduce # of locals by coalescing", createCoalesceLocalsPass);
   registerPass("coalesce-locals-learning", "reduce # of locals by coalescing and learning", createCoalesceLocalsWithLearningPass);
   registerPass("code-pushing", "push code forward, potentially making it not always execute", createCodePushingPass);
   registerPass("code-folding", "fold code, merging duplicates", createCodeFoldingPass);
   registerPass("const-hoisting", "hoist repeated constants to a local", createConstHoistingPass);
   registerPass("dce", "removes unreachable code", createDeadCodeEliminationPass);
+  registerPass("dfo", "optimizes using the DataFlow SSA IR", createDataFlowOptsPass);
   registerPass("duplicate-function-elimination", "removes duplicate functions", createDuplicateFunctionEliminationPass);
   registerPass("extract-function", "leaves just one function (useful for debugging)", createExtractFunctionPass);
   registerPass("flatten", "flattens out code, removing nesting", createFlattenPass);
@@ -86,6 +90,7 @@ void PassRegistry::registerPasses() {
   registerPass("i64-to-i32-lowering", "lower all uses of i64s to use i32s instead", createI64ToI32LoweringPass);
   registerPass("instrument-locals", "instrument the build with code to intercept all loads and stores", createInstrumentLocalsPass);
   registerPass("instrument-memory", "instrument the build with code to intercept all loads and stores", createInstrumentMemoryPass);
+  registerPass("licm", "loop invariant code motion", createLoopInvariantCodeMotionPass);
   registerPass("memory-packing", "packs memory into separate segments, skipping zeros", createMemoryPackingPass);
   registerPass("merge-blocks", "merges blocks to their parents", createMergeBlocksPass);
   registerPass("merge-locals", "merges locals when beneficial", createMergeLocalsPass);
@@ -117,9 +122,11 @@ void PassRegistry::registerPasses() {
   registerPass("safe-heap", "instrument loads and stores to check for invalid behavior", createSafeHeapPass);
   registerPass("simplify-locals", "miscellaneous locals-related optimizations", createSimplifyLocalsPass);
   registerPass("simplify-locals-nonesting", "miscellaneous locals-related optimizations (no nesting at all; preserves flatness)", createSimplifyLocalsNoNestingPass);
-  registerPass("simplify-locals-notee", "miscellaneous locals-related optimizations", createSimplifyLocalsNoTeePass);
-  registerPass("simplify-locals-nostructure", "miscellaneous locals-related optimizations", createSimplifyLocalsNoStructurePass);
-  registerPass("simplify-locals-notee-nostructure", "miscellaneous locals-related optimizations", createSimplifyLocalsNoTeeNoStructurePass);
+  registerPass("simplify-locals-notee", "miscellaneous locals-related optimizations (no tees)", createSimplifyLocalsNoTeePass);
+  registerPass("simplify-locals-nostructure", "miscellaneous locals-related optimizations (no structure)", createSimplifyLocalsNoStructurePass);
+  registerPass("simplify-locals-notee-nostructure", "miscellaneous locals-related optimizations (no tees or structure)", createSimplifyLocalsNoTeeNoStructurePass);
+  registerPass("souperify", "emit Souper IR in text form", createSouperifyPass);
+  registerPass("souperify-single-use", "emit Souper IR in text form (single-use nodes only)", createSouperifySingleUsePass);
   registerPass("spill-pointers", "spill pointers to the C stack (useful for Boehm-style GC)", createSpillPointersPass);
   registerPass("ssa", "ssa-ify variables so that they have a single assignment", createSSAifyPass);
   registerPass("trap-mode-clamp", "replace trapping operations with clamping semantics", createTrapModeClamp);
@@ -196,6 +203,9 @@ void PassRunner::addDefaultGlobalOptimizationPrePasses() {
 }
 
 void PassRunner::addDefaultGlobalOptimizationPostPasses() {
+  if (options.optimizeLevel >= 2 || options.shrinkLevel >= 1) {
+    add("dae-optimizing");
+  }
   // inline when working hard, and when not preserving debug info
   // (inlining+optimizing can remove the annotations)
   if ((options.optimizeLevel >= 2 || options.shrinkLevel >= 2) &&
@@ -258,9 +268,9 @@ void PassRunner::run() {
       auto before = std::chrono::steady_clock::now();
       if (pass->isFunctionParallel()) {
         // function-parallel passes should get a new instance per function
-        for (auto& func : wasm->functions) {
-          runPassOnFunction(pass, func.get());
-        }
+        ModuleUtils::iterDefinedFunctions(*wasm, [&](Function* func) {
+          runPassOnFunction(pass, func);
+        });
       } else {
         runPass(pass);
       }
@@ -311,9 +321,11 @@ void PassRunner::run() {
               return ThreadWorkState::Finished; // nothing left
             }
             Function* func = this->wasm->functions[index].get();
-            // do the current task: run all passes on this function
-            for (auto* pass : stack) {
-              runPassOnFunction(pass, func);
+            if (!func->imported()) {
+              // do the current task: run all passes on this function
+              for (auto* pass : stack) {
+                runPassOnFunction(pass, func);
+              }
             }
             if (index + 1 == numFunctions) {
               return ThreadWorkState::Finished; // we did the last one

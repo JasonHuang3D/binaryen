@@ -105,7 +105,7 @@ struct I64ToI32Lowering : public WalkerPass<PostWalker<I64ToI32Lowering>> {
       auto& curr = module->globals[i];
       if (curr->type != i64) continue;
       curr->type = i32;
-      auto* high = new Global(*curr);
+      auto* high = ModuleUtils::copyGlobal(curr.get(), *module);
       high->name = makeHighName(curr->name);
       module->addGlobal(high);
     }
@@ -175,6 +175,9 @@ struct I64ToI32Lowering : public WalkerPass<PostWalker<I64ToI32Lowering>> {
   }
 
   void visitFunction(Function* func) {
+    if (func->imported()) {
+      return;
+    }
     if (func->result == i64) {
       func->result = i32;
       // body may not have out param if it ends with control flow
@@ -359,11 +362,6 @@ struct I64ToI32Lowering : public WalkerPass<PostWalker<I64ToI32Lowering>> {
         return builder->makeCall(curr->target, args, ty);
       }
     );
-  }
-
-  void visitCallImport(CallImport* curr) {
-    // imports cannot contain i64s
-    return;
   }
 
   void visitCallIndirect(CallIndirect* curr) {

@@ -58,9 +58,23 @@ struct ExpressionAnalyzer {
   using ExprComparer = std::function<bool(Expression*, Expression*)>;
   static bool flexibleEqual(Expression* left, Expression* right, ExprComparer comparer);
 
+  // Compares two expressions for equivalence.
   static bool equal(Expression* left, Expression* right) {
     auto comparer = [](Expression* left, Expression* right) {
       return false;
+    };
+    return flexibleEqual(left, right, comparer);
+  }
+
+  // A shallow comparison, ignoring child nodes.
+  static bool shallowEqual(Expression* left, Expression* right) {
+    auto comparer = [left, right](Expression* currLeft, Expression* currRight) {
+      if (currLeft == left && currRight == right) {
+        // these are the ones we want to compare
+        return false;
+      }
+      // otherwise, don't do the comparison, we don't care
+      return true;
     };
     return flexibleEqual(left, right, comparer);
   }
@@ -144,7 +158,6 @@ struct ReFinalize : public WalkerPass<PostWalker<ReFinalize, OverriddenVisitor<R
     updateBreakValueType(curr->default_, valueType);
   }
   void visitCall(Call* curr) { curr->finalize(); }
-  void visitCallImport(CallImport* curr) { curr->finalize(); }
   void visitCallIndirect(CallIndirect* curr) { curr->finalize(); }
   void visitGetLocal(GetLocal* curr) { curr->finalize(); }
   void visitSetLocal(SetLocal* curr) { curr->finalize(); }
@@ -176,7 +189,6 @@ struct ReFinalize : public WalkerPass<PostWalker<ReFinalize, OverriddenVisitor<R
   }
 
   void visitFunctionType(FunctionType* curr) { WASM_UNREACHABLE(); }
-  void visitImport(Import* curr) { WASM_UNREACHABLE(); }
   void visitExport(Export* curr) { WASM_UNREACHABLE(); }
   void visitGlobal(Global* curr) { WASM_UNREACHABLE(); }
   void visitTable(Table* curr) { WASM_UNREACHABLE(); }
@@ -203,7 +215,6 @@ struct ReFinalizeNode : public OverriddenVisitor<ReFinalizeNode> {
   void visitBreak(Break* curr) { curr->finalize(); }
   void visitSwitch(Switch* curr) { curr->finalize(); }
   void visitCall(Call* curr) { curr->finalize(); }
-  void visitCallImport(CallImport* curr) { curr->finalize(); }
   void visitCallIndirect(CallIndirect* curr) { curr->finalize(); }
   void visitGetLocal(GetLocal* curr) { curr->finalize(); }
   void visitSetLocal(SetLocal* curr) { curr->finalize(); }
@@ -226,7 +237,6 @@ struct ReFinalizeNode : public OverriddenVisitor<ReFinalizeNode> {
   void visitUnreachable(Unreachable* curr) { curr->finalize(); }
 
   void visitFunctionType(FunctionType* curr) { WASM_UNREACHABLE(); }
-  void visitImport(Import* curr) { WASM_UNREACHABLE(); }
   void visitExport(Export* curr) { WASM_UNREACHABLE(); }
   void visitGlobal(Global* curr) { WASM_UNREACHABLE(); }
   void visitTable(Table* curr) { WASM_UNREACHABLE(); }

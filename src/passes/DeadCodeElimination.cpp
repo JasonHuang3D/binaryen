@@ -68,7 +68,7 @@ struct DeadCodeElimination : public WalkerPass<PostWalker<DeadCodeElimination>> 
 
   void addBreak(Name name) {
     // we normally have already reduced unreachable code into (unreachable)
-    // nodes, so we would not get to this function at all anyhow, the breaking
+    // nodes, so we would not get to this place at all anyhow, the breaking
     // instruction itself would be removed. However, an exception are things
     // like  (block (result i32) (call $x) (unreachable)) , which has type i32
     // despite not being exited.
@@ -237,7 +237,6 @@ struct DeadCodeElimination : public WalkerPass<PostWalker<DeadCodeElimination>> 
         case Expression::Id::BreakId: DELEGATE(Break);
         case Expression::Id::SwitchId: DELEGATE(Switch);
         case Expression::Id::CallId: DELEGATE(Call);
-        case Expression::Id::CallImportId: DELEGATE(CallImport);
         case Expression::Id::CallIndirectId: DELEGATE(CallIndirect);
         case Expression::Id::GetLocalId: DELEGATE(GetLocal);
         case Expression::Id::SetLocalId: DELEGATE(SetLocal);
@@ -309,10 +308,6 @@ struct DeadCodeElimination : public WalkerPass<PostWalker<DeadCodeElimination>> 
   }
 
   void visitCall(Call* curr) {
-    handleCall(curr);
-  }
-
-  void visitCallImport(CallImport* curr) {
     handleCall(curr);
   }
 

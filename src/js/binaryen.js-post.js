@@ -39,7 +39,6 @@ Module['LoopId'] = Module['_BinaryenLoopId']();
 Module['BreakId'] = Module['_BinaryenBreakId']();
 Module['SwitchId'] = Module['_BinaryenSwitchId']();
 Module['CallId'] = Module['_BinaryenCallId']();
-Module['CallImportId'] = Module['_BinaryenCallImportId']();
 Module['CallIndirectId'] = Module['_BinaryenCallIndirectId']();
 Module['GetLocalId'] = Module['_BinaryenGetLocalId']();
 Module['SetLocalId'] = Module['_BinaryenSetLocalId']();
@@ -196,10 +195,8 @@ Module['LtFloat64'] = Module['_BinaryenLtFloat64']();
 Module['LeFloat64'] = Module['_BinaryenLeFloat64']();
 Module['GtFloat64'] = Module['_BinaryenGtFloat64']();
 Module['GeFloat64'] = Module['_BinaryenGeFloat64']();
-Module['PageSize'] = Module['_BinaryenPageSize']();
 Module['CurrentMemory'] = Module['_BinaryenCurrentMemory']();
 Module['GrowMemory'] = Module['_BinaryenGrowMemory']();
-Module['HasFeature'] = Module['_BinaryenHasFeature']();
 Module['AtomicRMWAdd'] = Module['_BinaryenAtomicRMWAdd']();
 Module['AtomicRMWSub'] = Module['_BinaryenAtomicRMWSub']();
 Module['AtomicRMWAnd'] = Module['_BinaryenAtomicRMWAnd']();
@@ -252,11 +249,6 @@ Module['Module'] = function(module) {
       return Module['_BinaryenCall'](module, strToStack(name), i32sToStack(operands), operands.length, type);
     });
   };
-  this['callImport'] = this['call_import'] = function(name, operands, type) {
-    return preserveStack(function() {
-      return Module['_BinaryenCallImport'](module, strToStack(name), i32sToStack(operands), operands.length, type);
-    });
-  };
   this['callIndirect'] = this['call_indirect'] = function(target, operands, type) {
     return preserveStack(function() {
       return Module['_BinaryenCallIndirect'](module, target, i32sToStack(operands), operands.length, strToStack(type));
@@ -282,9 +274,6 @@ Module['Module'] = function(module) {
   }
   this['growMemory'] = this['grow_memory'] = function(value) {
     return Module['_BinaryenHost'](module, Module['GrowMemory'], null, i32sToStack([value]), 1);
-  }
-  this['hasFeature'] = this['has_feature'] = function(name) {
-    return Module['_BinaryenHost'](module, Module['HasFeature'], strToStack(name));
   }
 
   // The Const creation API is a little different: we don't want users to
@@ -1077,7 +1066,11 @@ Module['Module'] = function(module) {
       return Module['_BinaryenAddGlobal'](module, strToStack(name), type, mutable, init);
     });
   }
-  this['addImport'] = // deprecated
+  this['removeGlobal'] = function(name) {
+    return preserveStack(function () {
+      return Module['_BinaryenRemoveGlobal'](module, strToStack(name));
+    });
+  }
   this['addFunctionImport'] = function(internalName, externalModuleName, externalBaseName, functionType) {
     return preserveStack(function() {
       return Module['_BinaryenAddFunctionImport'](module, strToStack(internalName), strToStack(externalModuleName), strToStack(externalBaseName), functionType);
@@ -1088,19 +1081,14 @@ Module['Module'] = function(module) {
       return Module['_BinaryenAddTableImport'](module, strToStack(internalName), strToStack(externalModuleName), strToStack(externalBaseName));
     });
   };
-  this['addMemoryImport'] = function(internalName, externalModuleName, externalBaseName) {
+  this['addMemoryImport'] = function(internalName, externalModuleName, externalBaseName, shared) {
     return preserveStack(function() {
-      return Module['_BinaryenAddMemoryImport'](module, strToStack(internalName), strToStack(externalModuleName), strToStack(externalBaseName));
+      return Module['_BinaryenAddMemoryImport'](module, strToStack(internalName), strToStack(externalModuleName), strToStack(externalBaseName), shared);
     });
   };
   this['addGlobalImport'] = function(internalName, externalModuleName, externalBaseName, globalType) {
     return preserveStack(function() {
       return Module['_BinaryenAddGlobalImport'](module, strToStack(internalName), strToStack(externalModuleName), strToStack(externalBaseName), globalType);
-    });
-  };
-  this['removeImport'] = function(internalName) {
-    return preserveStack(function() {
-      return Module['_BinaryenRemoveImport'](module, strToStack(internalName));
     });
   };
   this['addExport'] = // deprecated
@@ -1129,12 +1117,15 @@ Module['Module'] = function(module) {
       return Module['_BinaryenRemoveExport'](module, strToStack(externalName));
     });
   };
-  this['setFunctionTable'] = function(funcs) {
+  this['setFunctionTable'] = function(initial, maximum, funcNames) {
     return preserveStack(function() {
-      return Module['_BinaryenSetFunctionTable'](module, i32sToStack(funcs), funcs.length);
+      return Module['_BinaryenSetFunctionTable'](module, initial, maximum,
+        i32sToStack(funcNames.map(strToStack)),
+        funcNames.length
+      );
     });
   };
-  this['setMemory'] = function(initial, maximum, exportName, segments) {
+  this['setMemory'] = function(initial, maximum, exportName, segments, shared) {
     // segments are assumed to be { offset: expression ref, data: array of 8-bit data }
     if (!segments) segments = [];
     return preserveStack(function() {
@@ -1155,7 +1146,8 @@ Module['Module'] = function(module) {
             return segment.data.length;
           })
         ),
-        segments.length
+        segments.length,
+        shared
       );
     });
   };
@@ -1335,13 +1327,6 @@ Module['getExpressionInfo'] = function(expr) {
         'target': Pointer_stringify(Module['_BinaryenCallGetTarget'](expr)),
         'operands': getAllNested(expr, Module[ '_BinaryenCallGetNumOperands'], Module['_BinaryenCallGetOperand'])
       };
-    case Module['CallImportId']:
-      return {
-        'id': id,
-        'type': type,
-        'target': Pointer_stringify(Module['_BinaryenCallImportGetTarget'](expr)),
-        'operands': getAllNested(expr, Module['_BinaryenCallImportGetNumOperands'], Module['_BinaryenCallImportGetOperand']),
-      };
     case Module['CallIndirectId']:
       return {
         'id': id,
@@ -1516,6 +1501,8 @@ Module['getFunctionTypeInfo'] = function(func) {
 Module['getFunctionInfo'] = function(func) {
   return {
     'name': Pointer_stringify(Module['_BinaryenFunctionGetName'](func)),
+    'module': Pointer_stringify(Module['_BinaryenFunctionImportGetModule'](func)),
+    'base': Pointer_stringify(Module['_BinaryenFunctionImportGetBase'](func)),
     'type': Pointer_stringify(Module['_BinaryenFunctionGetType'](func)),
     'params': getAllNested(func, Module['_BinaryenFunctionGetNumParams'], Module['_BinaryenFunctionGetParam']),
     'result': Module['_BinaryenFunctionGetResult'](func),
@@ -1524,15 +1511,13 @@ Module['getFunctionInfo'] = function(func) {
   };
 };
 
-// Obtains information about an 'Import'
-Module['getImportInfo'] = function(import_) {
+// Obtains information about a 'Global'
+Module['getGlobalInfo'] = function(func) {
   return {
-    'kind': Module['_BinaryenImportGetKind'](import_),
-    'module': Pointer_stringify(Module['_BinaryenImportGetModule'](import_)),
-    'base': Pointer_stringify(Module['_BinaryenImportGetBase'](import_)),
-    'name': Pointer_stringify(Module['_BinaryenImportGetName'](import_)),
-    'globalType': Module['_BinaryenImportGetGlobalType'](import_),
-    'functionType': Pointer_stringify(Module['_BinaryenImportGetFunctionType'](import_))
+    'name': Pointer_stringify(Module['_BinaryenGlobalGetName'](func)),
+    'module': Pointer_stringify(Module['_BinaryenGlobalImportGetModule'](func)),
+    'base': Pointer_stringify(Module['_BinaryenGlobalImportGetBase'](func)),
+    'type': Pointer_stringify(Module['_BinaryenGlobalGetType'](func))
   };
 };
 

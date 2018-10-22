@@ -32,6 +32,7 @@
 #include "wasm-builder.h"
 #include "parsing.h"
 #include "wasm-validator.h"
+#include "ir/import-utils.h"
 
 namespace wasm {
 
@@ -44,7 +45,8 @@ enum {
 // accept
 enum WebLimitations {
   MaxDataSegments = 100 * 1000,
-  MaxFunctionBodySize = 128 * 1024
+  MaxFunctionBodySize = 128 * 1024,
+  MaxFunctionLocals = 50 * 1000
 };
 
 template<typename T, typename MiniT>
@@ -339,6 +341,8 @@ enum EncodedType {
 namespace UserSections {
 extern const char* Name;
 extern const char* SourceMapUrl;
+
+extern const char* Dylink;
 
 enum Subsection {
   NameFunction = 1,
@@ -713,14 +717,18 @@ public:
   void writeNames();
   void writeSourceMapUrl();
   void writeSymbolMap();
-  void writeUserSections();
+  void writeEarlyUserSections();
+  void writeLateUserSections();
+  void writeUserSection(const UserSection& section);
 
   void writeSourceMapProlog();
   void writeSourceMapEpilog();
+  void writeDebugLocation(const Function::DebugLocation& loc);
   void writeDebugLocation(Expression* curr, Function* func);
 
   // helpers
   void writeInlineString(const char* name);
+  void writeEscapedName(const char* name);
   void writeInlineBuffer(const char* data, size_t size);
 
   struct Buffer {
@@ -756,6 +764,8 @@ private:
   size_t sourceMapLocationsSizeAtSectionStart;
   Function::DebugLocation lastDebugLocation;
 
+  std::unique_ptr<ImportInfo> importInfo;
+
   void prepare();
 };
 
@@ -769,7 +779,7 @@ class WasmBinaryBuilder {
 
   size_t pos = 0;
   Index startIndex = -1;
-  bool useDebugLocation;
+  std::set<Function::DebugLocation> debugLocation;
 
   std::set<BinaryConsts::Section> seenSections;
 
@@ -781,7 +791,7 @@ public:
       debug(debug),
       sourceMap(nullptr),
       nextDebugLocation(0, { 0, 0, 0 }),
-      useDebugLocation(false) {}
+      debugLocation() {}
 
   void read();
   void readUserSection(size_t payloadLen);
@@ -826,9 +836,8 @@ public:
 
   // We read functions before we know their names, so we need to backpatch the names later
   std::vector<Function*> functions; // we store functions here before wasm.addFunction after we know their names
-  std::vector<Import*> functionImports; // we store function imports here before wasm.addFunctionImport after we know their names
-  std::map<Index, std::vector<Call*>> functionCalls; // at index i we have all calls to the defined function i
-  std::map<Index, std::vector<CallImport*>> functionImportCalls; // at index i we have all callImports to the imported function i
+  std::vector<Function*> functionImports; // we store function imports here before wasm.addFunctionImport after we know their names
+  std::map<Index, std::vector<Call*>> functionCalls; // at index i we have all calls to the function i
   Function* currFunction = nullptr;
   Index endOfFunction = -1; // before we see a function (like global init expressions), there is no end of function to check
 
@@ -897,7 +906,6 @@ public:
   void setDebugLocations(std::istream* sourceMap_) {
       sourceMap = sourceMap_;
   }
-  Function::DebugLocation debugLocation;
   std::unordered_map<std::string, Index> debugInfoFileIndices;
   void readNextDebugLocation();
   void readSourceMapHeader();
@@ -918,18 +926,7 @@ public:
   void visitBreak(Break *curr, uint8_t code);
   void visitSwitch(Switch* curr);
 
-  template<typename T>
-  void fillCall(T* call, FunctionType* type) {
-    assert(type);
-    auto num = type->params.size();
-    call->operands.resize(num);
-    for (size_t i = 0; i < num; i++) {
-      call->operands[num - i - 1] = popNonVoidExpression();
-    }
-    call->type = type->result;
-  }
-
-  Expression* visitCall();
+  void visitCall(Call* curr);
   void visitCallIndirect(CallIndirect* curr);
   void visitGetLocal(GetLocal* curr);
   void visitSetLocal(SetLocal *curr, uint8_t code);

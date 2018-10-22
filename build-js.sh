@@ -90,9 +90,11 @@ echo "building shared bitcode"
   $BINARYEN_SRC/ir/LocalGraph.cpp \
   $BINARYEN_SRC/passes/pass.cpp \
   $BINARYEN_SRC/passes/CoalesceLocals.cpp \
+  $BINARYEN_SRC/passes/DeadArgumentElimination.cpp \
   $BINARYEN_SRC/passes/CodeFolding.cpp \
   $BINARYEN_SRC/passes/CodePushing.cpp \
   $BINARYEN_SRC/passes/ConstHoisting.cpp \
+  $BINARYEN_SRC/passes/DataFlowOpts.cpp \
   $BINARYEN_SRC/passes/DeadCodeElimination.cpp \
   $BINARYEN_SRC/passes/DuplicateFunctionElimination.cpp \
   $BINARYEN_SRC/passes/ExtractFunction.cpp \
@@ -105,6 +107,7 @@ echo "building shared bitcode"
   $BINARYEN_SRC/passes/LegalizeJSInterface.cpp \
   $BINARYEN_SRC/passes/LocalCSE.cpp \
   $BINARYEN_SRC/passes/LogExecution.cpp \
+  $BINARYEN_SRC/passes/LoopInvariantCodeMotion.cpp \
   $BINARYEN_SRC/passes/MemoryPacking.cpp \
   $BINARYEN_SRC/passes/MergeBlocks.cpp \
   $BINARYEN_SRC/passes/MergeLocals.cpp \
@@ -129,6 +132,7 @@ echo "building shared bitcode"
   $BINARYEN_SRC/passes/ReReloop.cpp \
   $BINARYEN_SRC/passes/SafeHeap.cpp \
   $BINARYEN_SRC/passes/SimplifyLocals.cpp \
+  $BINARYEN_SRC/passes/Souperify.cpp \
   $BINARYEN_SRC/passes/SpillPointers.cpp \
   $BINARYEN_SRC/passes/SSAify.cpp \
   $BINARYEN_SRC/passes/StackIR.cpp \
@@ -186,7 +190,6 @@ export_function "_BinaryenLoopId"
 export_function "_BinaryenBreakId"
 export_function "_BinaryenSwitchId"
 export_function "_BinaryenCallId"
-export_function "_BinaryenCallImportId"
 export_function "_BinaryenCallIndirectId"
 export_function "_BinaryenGetLocalId"
 export_function "_BinaryenSetLocalId"
@@ -369,7 +372,6 @@ export_function "_BinaryenLoop"
 export_function "_BinaryenBreak"
 export_function "_BinaryenSwitch"
 export_function "_BinaryenCall"
-export_function "_BinaryenCallImport"
 export_function "_BinaryenCallIndirect"
 export_function "_BinaryenGetLocal"
 export_function "_BinaryenSetLocal"
@@ -429,11 +431,6 @@ export_function "_BinaryenSwitchGetValue"
 export_function "_BinaryenCallGetTarget"
 export_function "_BinaryenCallGetNumOperands"
 export_function "_BinaryenCallGetOperand"
-
-# 'CallImport' expression operations
-export_function "_BinaryenCallImportGetTarget"
-export_function "_BinaryenCallImportGetNumOperands"
-export_function "_BinaryenCallImportGetOperand"
 
 # 'CallIndirect' expression operations
 export_function "_BinaryenCallIndirectGetTarget"
@@ -538,11 +535,11 @@ export_function "_BinaryenAddFunction"
 export_function "_BinaryenGetFunction"
 export_function "_BinaryenRemoveFunction"
 export_function "_BinaryenAddGlobal"
+export_function "_BinaryenRemoveGlobal"
 export_function "_BinaryenAddFunctionImport"
 export_function "_BinaryenAddTableImport"
 export_function "_BinaryenAddMemoryImport"
 export_function "_BinaryenAddGlobalImport"
-export_function "_BinaryenRemoveImport"
 export_function "_BinaryenAddFunctionExport"
 export_function "_BinaryenAddTableExport"
 export_function "_BinaryenAddMemoryExport"
@@ -590,12 +587,10 @@ export_function "_BinaryenFunctionRunPasses"
 export_function "_BinaryenFunctionSetDebugLocation"
 
 # 'Import' operations
-export_function "_BinaryenImportGetKind"
-export_function "_BinaryenImportGetModule"
-export_function "_BinaryenImportGetBase"
-export_function "_BinaryenImportGetName"
-export_function "_BinaryenImportGetGlobalType"
-export_function "_BinaryenImportGetFunctionType"
+export_function "_BinaryenGlobalImportGetModule"
+export_function "_BinaryenGlobalImportGetBase"
+export_function "_BinaryenFunctionImportGetModule"
+export_function "_BinaryenFunctionImportGetBase"
 
 # 'Export' operations
 export_function "_BinaryenExportGetKind"

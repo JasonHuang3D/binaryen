@@ -43,132 +43,6 @@ Name I32_EXPR  = "i32.expr",
      F64_EXPR  = "f64.expr",
      ANY_EXPR  = "any.expr";
 
-// A pattern
-struct Pattern {
-  Expression* input;
-  Expression* output;
-
-  Pattern(Expression* input, Expression* output) : input(input), output(output) {}
-};
-
-#if 0
-// Database of patterns
-struct PatternDatabase {
-  Module wasm;
-
-  char* input;
-
-  std::map<Expression::Id, std::vector<Pattern>> patternMap; // root expression id => list of all patterns for it TODO optimize more
-
-  PatternDatabase() {
-    // generate module
-    input = strdup(
-      #include "OptimizeInstructions.wast.processed"
-    );
-    try {
-      SExpressionParser parser(input);
-      Element& root = *parser.root;
-      SExpressionWasmBuilder builder(wasm, *root[0]);
-      // parse module form
-      auto* func = wasm.getFunction("patterns");
-      auto* body = func->body->cast<Block>();
-      for (auto* item : body->list) {
-        auto* pair = item->cast<Block>();
-        patternMap[pair->list[0]->_id].emplace_back(pair->list[0], pair->list[1]);
-      }
-    } catch (ParseException& p) {
-      p.dump(std::cerr);
-      Fatal() << "error in parsing wasm binary";
-    }
-  }
-
-  ~PatternDatabase() {
-    free(input);
-  };
-};
-
-static PatternDatabase* database = nullptr;
-
-struct DatabaseEnsurer {
-  DatabaseEnsurer() {
-    assert(!database);
-    database = new PatternDatabase;
-  }
-};
-#endif
-
-// Check for matches and apply them
-struct Match {
-  Module& wasm;
-  Pattern& pattern;
-
-  Match(Module& wasm, Pattern& pattern) : wasm(wasm), pattern(pattern) {}
-
-  std::vector<Expression*> wildcards; // id in i32.any(id) etc. => the expression it represents in this match
-
-  // Comparing/checking
-
-  // Check if we can match to this pattern, updating ourselves with the info if so
-  bool check(Expression* seen) {
-    // compare seen to the pattern input, doing a special operation for our "wildcards"
-    assert(wildcards.size() == 0);
-    auto compare = [this](Expression* subInput, Expression* subSeen) {
-      CallImport* call = subInput->dynCast<CallImport>();
-      if (!call || call->operands.size() != 1 || call->operands[0]->type != i32 || !call->operands[0]->is<Const>()) return false;
-      Index index = call->operands[0]->cast<Const>()->value.geti32();
-      // handle our special functions
-      auto checkMatch = [&](Type type) {
-        if (type != none && subSeen->type != type) return false;
-        while (index >= wildcards.size()) {
-          wildcards.push_back(nullptr);
-        }
-        if (!wildcards[index]) {
-          // new wildcard
-          wildcards[index] = subSeen; // NB: no need to copy
-          return true;
-        } else {
-          // We are seeing this index for a second or later time, check it matches
-          return ExpressionAnalyzer::equal(subSeen, wildcards[index]);
-        };
-      };
-      if (call->target == I32_EXPR) {
-        if (checkMatch(i32)) return true;
-      } else if (call->target == I64_EXPR) {
-        if (checkMatch(i64)) return true;
-      } else if (call->target == F32_EXPR) {
-        if (checkMatch(f32)) return true;
-      } else if (call->target == F64_EXPR) {
-        if (checkMatch(f64)) return true;
-      } else if (call->target == ANY_EXPR) {
-        if (checkMatch(none)) return true;
-      }
-      return false;
-    };
-
-    return ExpressionAnalyzer::flexibleEqual(pattern.input, seen, compare);
-  }
-
-
-  // Applying/copying
-
-  // Apply the match, generate an output expression from the matched input, performing substitutions as necessary
-  Expression* apply() {
-    // When copying a wildcard, perform the substitution.
-    // TODO: we can reuse nodes, not copying a wildcard when it appears just once, and we can reuse other individual nodes when they are discarded anyhow.
-    auto copy = [this](Expression* curr) -> Expression* {
-      CallImport* call = curr->dynCast<CallImport>();
-      if (!call || call->operands.size() != 1 || call->operands[0]->type != i32 || !call->operands[0]->is<Const>()) return nullptr;
-      Index index = call->operands[0]->cast<Const>()->value.geti32();
-      // handle our special functions
-      if (call->target == I32_EXPR || call->target == I64_EXPR || call->target == F32_EXPR || call->target == F64_EXPR || call->target == ANY_EXPR) {
-        return ExpressionManipulator::copy(wildcards.at(index), wasm);
-      }
-      return nullptr;
-    };
-    return ExpressionManipulator::flexibleCopy(pattern.output, wasm, copy);
-  }
-};
-
 // Utilities
 
 // returns the maximum amount of bits used in an integer expression
@@ -258,22 +132,6 @@ Index getMaxBits(Expression* curr, LocalInfoProvider* localInfoProvider) {
   }
 }
 
-// looks through fallthrough operations, like tee_local, block fallthrough, etc.
-// too and block fallthroughs, etc.
-Expression* getFallthrough(Expression* curr) {
-  if (auto* set = curr->dynCast<SetLocal>()) {
-    if (set->isTee()) {
-      return getFallthrough(set->value);
-    }
-  } else if (auto* block = curr->dynCast<Block>()) {
-    // if no name, we can't be broken to, and then can look at the fallthrough
-    if (!block->name.is() && block->list.size() > 0) {
-      return getFallthrough(block->list.back());
-    }
-  }
-  return curr;
-}
-
 // Useful information about locals
 struct LocalInfo {
   static const Index kUnknown = Index(-1);
@@ -316,7 +174,7 @@ struct LocalScanner : PostWalker<LocalScanner> {
     auto type = getFunction()->getLocalType(curr->index);
     if (type != i32 && type != i64) return;
     // an integer var, worth processing
-    auto* value = getFallthrough(curr->value);
+    auto* value = Properties::getFallthrough(curr->value);
     auto& info = localInfo[curr->index];
     info.maxBits = std::max(info.maxBits, getMaxBits(value, this));
     auto signExtBits = LocalInfo::kUnknown;
@@ -421,7 +279,7 @@ struct OptimizeInstructions : public WalkerPass<PostWalker<OptimizeInstructions,
         Index extraShifts;
         auto bits = Properties::getAlmostSignExtBits(binary, extraShifts);
         if (extraShifts == 0) {
-          if (auto* load = getFallthrough(ext)->dynCast<Load>()) {
+          if (auto* load = Properties::getFallthrough(ext)->dynCast<Load>()) {
             // pattern match a load of 8 bits and a sign extend using a shl of 24 then shr_s of 24 as well, etc.
             if (LoadUtils::canBeSigned(load) &&
                 ((load->bytes == 1 && bits == 8) || (load->bytes == 2 && bits == 16))) {

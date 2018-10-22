@@ -32,12 +32,14 @@
 
 #include <atomic>
 
-#include <wasm.h>
-#include <pass.h>
-#include <wasm-builder.h>
-#include <ir/utils.h>
-#include <ir/literal-utils.h>
-#include <parsing.h>
+#include "wasm.h"
+#include "pass.h"
+#include "wasm-builder.h"
+#include "ir/literal-utils.h"
+#include "ir/module-utils.h"
+#include "ir/utils.h"
+#include "parsing.h"
+#include "passes/opt-utils.h"
 
 namespace wasm {
 
@@ -273,9 +275,7 @@ struct Inlining : public Pass {
     }
     for (auto& segment : module->table.segments) {
       for (auto name : segment.data) {
-        if (module->getFunctionOrNull(name)) {
-          infos[name].usedGlobally = true;
-        }
+        infos[name].usedGlobally = true;
       }
     }
   }
@@ -283,12 +283,11 @@ struct Inlining : public Pass {
   bool iteration(PassRunner* runner, Module* module) {
     // decide which to inline
     InliningState state;
-    for (auto& func : module->functions) {
-      // on the first iteration, allow multiple inlinings per function
+    ModuleUtils::iterDefinedFunctions(*module, [&](Function* func) {
       if (infos[func->name].worthInlining(runner->options)) {
         state.worthInlining.insert(func->name);
       }
-    }
+    });
     if (state.worthInlining.size() == 0) return false;
     // fill in actionsForFunction, as we operate on it in parallel (each function to its own entry)
     for (auto& func : module->functions) {
@@ -332,7 +331,7 @@ struct Inlining : public Pass {
       wasm::UniqueNameMapper::uniquify(func->body);
     }
     if (optimize && inlinedInto.size() > 0) {
-      doOptimize(inlinedInto, module, runner);
+      OptUtils::optimizeAfterInlining(inlinedInto, module, runner);
     }
     // remove functions that we no longer need after inlining
     auto& funcs = module->functions;
@@ -347,30 +346,6 @@ struct Inlining : public Pass {
     }), funcs.end());
     // return whether we did any work
     return inlinedUses.size() > 0;
-  }
-
-  // Run useful optimizations after inlining, things like removing
-  // unnecessary new blocks, sharing variables, etc.
-  void doOptimize(std::unordered_set<Function*>& funcs, Module* module, PassRunner* parentRunner) {
-    // save the full list of functions on the side
-    std::vector<std::unique_ptr<Function>> all;
-    all.swap(module->functions);
-    module->updateMaps();
-    for (auto& func : funcs) {
-      module->addFunction(func);
-    }
-    PassRunner runner(module, parentRunner->options);
-    runner.setIsNested(true);
-    runner.setValidateGlobally(false); // not a full valid module
-    runner.add("precompute-propagate"); // this is especially useful after inlining
-    runner.addDefaultFunctionOptimizationPasses(); // do all the usual stuff
-    runner.run();
-    // restore all the funcs
-    for (auto& func : module->functions) {
-      func.release();
-    }
-    all.swap(module->functions);
-    module->updateMaps();
   }
 };
 

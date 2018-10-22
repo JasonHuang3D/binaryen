@@ -26,6 +26,7 @@
 #include "asmjs/shared-constants.h"
 #include "wasm-builder.h"
 #include "ir/bits.h"
+#include "ir/function-type-utils.h"
 #include "ir/import-utils.h"
 
 namespace wasm {
@@ -114,40 +115,45 @@ struct SafeHeap : public Pass {
   Name dynamicTopPtr, segfault, alignfault;
 
   void addImports(Module* module) {
-    // imports
-    if (auto* existing = ImportUtils::getImport(*module, ENV, DYNAMICTOP_PTR_IMPORT)) {
+    ImportInfo info(*module);
+    if (auto* existing = info.getImportedGlobal(ENV, DYNAMICTOP_PTR_IMPORT)) {
       dynamicTopPtr = existing->name;
     } else {
-      auto* import = new Import;
+      auto* import = new Global;
       import->name = dynamicTopPtr = DYNAMICTOP_PTR_IMPORT;
       import->module = ENV;
       import->base = DYNAMICTOP_PTR_IMPORT;
-      import->kind = ExternalKind::Global;
-      import->globalType = i32;
-      module->addImport(import);
+      import->type = i32;
+      module->addGlobal(import);
     }
-    if (auto* existing = ImportUtils::getImport(*module, ENV, SEGFAULT_IMPORT)) {
+    if (auto* existing = info.getImportedFunction(ENV, SEGFAULT_IMPORT)) {
       segfault = existing->name;
     } else {
-      auto* import = new Import;
+      auto* import = new Function;
       import->name = segfault = SEGFAULT_IMPORT;
       import->module = ENV;
       import->base = SEGFAULT_IMPORT;
-      import->kind = ExternalKind::Function;
-      import->functionType = ensureFunctionType("v", module)->name;
-      module->addImport(import);
+      auto* functionType = ensureFunctionType("v", module);
+      import->type = functionType->name;
+      FunctionTypeUtils::fillFunction(import, functionType);
+      module->addFunction(import);
     }
-    if (auto* existing = ImportUtils::getImport(*module, ENV, ALIGNFAULT_IMPORT)) {
+    if (auto* existing = info.getImportedFunction(ENV, ALIGNFAULT_IMPORT)) {
       alignfault = existing->name;
     } else {
-      auto* import = new Import;
+      auto* import = new Function;
       import->name = alignfault = ALIGNFAULT_IMPORT;
       import->module = ENV;
       import->base = ALIGNFAULT_IMPORT;
-      import->kind = ExternalKind::Function;
-      import->functionType = ensureFunctionType("v", module)->name;
-      module->addImport(import);
+      auto* functionType = ensureFunctionType("v", module);
+      import->type = functionType->name;
+      FunctionTypeUtils::fillFunction(import, functionType);
+      module->addFunction(import);
     }
+  }
+
+  bool isPossibleAtomicOperation(Index align, Index bytes, bool shared, Type type) {
+    return align == bytes && shared && isIntegerType(type);
   }
 
   void addGlobals(Module* module) {
@@ -166,8 +172,10 @@ struct SafeHeap : public Pass {
             if (align > bytes) continue;
             for (auto isAtomic : { true, false }) {
               load.isAtomic = isAtomic;
-              if (isAtomic && align != bytes) continue;
-              if (isAtomic && !module->memory.shared) continue;
+              if (isAtomic &&
+                  !isPossibleAtomicOperation(align, bytes, module->memory.shared, type)) {
+                continue;
+              }
               addLoadFunc(load, module);
             }
           }
@@ -187,8 +195,10 @@ struct SafeHeap : public Pass {
           if (align > bytes) continue;
           for (auto isAtomic : { true, false }) {
             store.isAtomic = isAtomic;
-            if (isAtomic && align != bytes) continue;
-            if (isAtomic && !module->memory.shared) continue;
+            if (isAtomic &&
+                !isPossibleAtomicOperation(align, bytes, module->memory.shared, valueType)) {
+              continue;
+            }
             addStoreFunc(store, module);
           }
         }
@@ -291,7 +301,7 @@ struct SafeHeap : public Pass {
         builder.makeGetLocal(local, i32),
         builder.makeConst(Literal(int32_t(align - 1)))
       ),
-      builder.makeCallImport(alignfault, {}, none)
+      builder.makeCall(alignfault, {}, none)
     );
   }
 
@@ -316,7 +326,7 @@ struct SafeHeap : public Pass {
           )
         )
       ),
-      builder.makeCallImport(segfault, {}, none)
+      builder.makeCall(segfault, {}, none)
     );
   }
 };

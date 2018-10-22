@@ -17,6 +17,11 @@
 //
 // Computes code at compile time where possible.
 //
+// Possible nondeterminism: WebAssembly NaN signs are nondeterministic,
+// and this pass may optimize e.g. a float 0 / 0 into +nan while a VM may
+// emit -nan, which can be a noticeable difference if the bits are
+// looked at.
+//
 
 #include <wasm.h>
 #include <pass.h>
@@ -61,9 +66,6 @@ public:
   Flow visitCall(Call* curr) {
     return Flow(NOTPRECOMPUTABLE_FLOW);
   }
-  Flow visitCallImport(CallImport* curr) {
-    return Flow(NOTPRECOMPUTABLE_FLOW);
-  }
   Flow visitCallIndirect(CallIndirect* curr) {
     return Flow(NOTPRECOMPUTABLE_FLOW);
   }
@@ -89,11 +91,9 @@ public:
     return Flow(NOTPRECOMPUTABLE_FLOW);
   }
   Flow visitGetGlobal(GetGlobal *curr) {
-    auto* global = module->getGlobalOrNull(curr->name);
-    if (global) {
-      if (!global->mutable_) {
-        return visit(global->init);
-      }
+    auto* global = module->getGlobal(curr->name);
+    if (!global->imported() && !global->mutable_) {
+      return visit(global->init);
     }
     return Flow(NOTPRECOMPUTABLE_FLOW);
   }
@@ -316,7 +316,7 @@ private:
             value = curr; // this is the first
             first = false;
           } else {
-            if (!value.bitwiseEqual(curr)) {
+            if (value != curr) {
               // not the same, give up
               value = Literal();
               break;

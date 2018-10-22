@@ -30,6 +30,7 @@
 #include "shared-constants.h"
 #include "asmjs/shared-constants.h"
 #include "asm_v_wasm.h"
+#include "ir/function-type-utils.h"
 
 namespace wasm {
 
@@ -41,18 +42,22 @@ struct LogExecution : public WalkerPass<PostWalker<LogExecution>> {
   }
 
   void visitFunction(Function* curr) {
+    if (curr->imported()) {
+      return;
+    }
     curr->body = makeLogCall(curr->body);
   }
 
   void visitModule(Module *curr) {
     // Add the import
-    auto import = new Import;
+    auto import = new Function;
     import->name = LOGGER;
     import->module = ENV;
     import->base = LOGGER;
-    import->functionType = ensureFunctionType("vi", curr)->name;
-    import->kind = ExternalKind::Function;
-    curr->addImport(import);
+    auto* functionType = ensureFunctionType("vi", curr);
+    import->type = functionType->name;
+    FunctionTypeUtils::fillFunction(import, functionType);
+    curr->addFunction(import);
   }
 
 private:
@@ -60,7 +65,7 @@ private:
     static Index id = 0;
     Builder builder(*getModule());
     return builder.makeSequence(
-      builder.makeCallImport(
+      builder.makeCall(
         LOGGER,
         { builder.makeConst(Literal(int32_t(id++))) },
         none
